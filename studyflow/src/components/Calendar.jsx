@@ -8,6 +8,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { Modal, Button, Form } from "react-bootstrap";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { Link } from "react-router-dom"; // Importiere Link für die Navigation
+import "../App.css";
 
 function Calendar() {
   const [events, setEvents] = useState([]);
@@ -19,6 +20,13 @@ function Calendar() {
     event: null,
   });
   const [isExam, setIsExam] = useState(false);
+
+  const [showFlames, setShowFlames] = useState(false);
+
+  const triggerFlames = () => {
+    setShowFlames(true);
+    setTimeout(() => setShowFlames(false), 3000); // Flammen verschwinden nach 3 Sekunden
+  };
 
   useEffect(() => {
     fetchEvents();
@@ -84,17 +92,19 @@ function Calendar() {
     const start = formData.get("start");
     let end = formData.get("end");
     const daysBefore = isExam ? parseInt(formData.get("daysBefore"), 10) : 0;
-    const studyDuration = isExam ? parseInt(formData.get("studyDuration"), 10) : 0;
+    const studyDuration = isExam
+      ? parseInt(formData.get("studyDuration"), 10)
+      : 0;
     const studyEventColor = formData.get("studyEventColor"); // Farbe aus dem Formular holen
-  
+
     // Wenn kein Endzeitpunkt angegeben, setze einen Standard-Endzeitpunkt (1 Stunde nach Start)
     if (!end) {
       end = new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString();
     }
-  
+
     // Wenn es sich um einen Test handelt, hole die Importance
     const importance = isExam ? parseInt(formData.get("importance"), 10) : null;
-  
+
     const eventData = {
       title,
       start,
@@ -103,12 +113,12 @@ function Calendar() {
       studyEventColor, // Farbe für die Study-Events hinzufügen
       ...(isExam ? { importance, backgroundColor: "red" } : {}),
     };
-  
+
     const axiosMethod = modalData.isEdit ? axios.put : axios.post;
     const url = modalData.isEdit
       ? `http://localhost:5000/api/events/${modalData.event.id}`
       : "http://localhost:5000/api/events";
-  
+
     axiosMethod(url, eventData)
       .then((response) => {
         // Wenn es sich um einen Test handelt, generiere Study-Events mit der Farbe
@@ -118,7 +128,7 @@ function Calendar() {
             importance,
             daysBefore,
             studyDuration,
-            studyEventColor  // Farbe hier übergeben
+            studyEventColor // Farbe hier übergeben
           );
         }
         fetchEvents();
@@ -132,115 +142,136 @@ function Calendar() {
         }
       });
   };
-  
 
-  const generateStudyEvents = (exam, importance, daysBefore, studyDuration, studyEventColor) => {
+  const generateStudyEvents = (
+    exam,
+    importance,
+    daysBefore,
+    studyDuration,
+    studyEventColor
+  ) => {
     const studyEvents = [];
-    
-    // Bestimme, wie oft pro Woche gelernt werden soll
+
     let studyInterval;
     if (importance >= 1 && importance <= 20) {
-      studyInterval = 3;  // Alle 3 Tage lernen
+      studyInterval = 3; // Alle 3 Tage lernen
     } else if (importance >= 21 && importance <= 50) {
-      studyInterval = 2;  // Alle 2 Tage lernen
+      studyInterval = 2; // Alle 2 Tage lernen
     } else if (importance >= 51 && importance <= 100) {
-      studyInterval = 1;  // Jeden Tag lernen
+      studyInterval = 1; // Jeden Tag lernen
     }
-  
+
     const examStart = new Date(exam.start);
-  
-    // Hole alle bestehenden Events aus der Datenbank oder dem Backend
-    axios.get("http://localhost:5000/api/events")
-      .then(response => {
-        const existingEvents = response.data.map(event => ({
+
+    axios
+      .get("http://localhost:5000/api/events")
+      .then((response) => {
+        const existingEvents = response.data.map((event) => ({
           start: new Date(event.start),
           end: new Date(event.end),
         }));
-  
-        // Generiere Study-Events für die Tage vor der Prüfung
+
         for (let i = 0; i < daysBefore; i++) {
           let studyEventDate = new Date(examStart);
-          studyEventDate.setDate(examStart.getDate() - i);  // Verschiebe den Starttag um i Tage
-  
-          // Wenn das Lernintervall erfüllt ist (z.B. alle 2 Tage oder 3 Tage)
+          studyEventDate.setDate(examStart.getDate() - i);
+
           if (i % studyInterval === 0) {
-            // Hole alle freien Zeiträume an diesem Tag
-            const freePeriods = getFreePeriods(studyEventDate, existingEvents, studyDuration);
-  
-            // Wenn genügend freie Zeiträume gefunden wurden, erstelle die Study-Events
-            freePeriods.forEach(period => {
-              const studyEventStart = new Date(period.start);
-  
-              // Überprüfe, ob die Study-Event-Zeit innerhalb des zulässigen Zeitraums liegt (zwischen 17:00 und 21:00)
-              if (studyEventStart.getHours() >= 17 && studyEventStart.getHours() < 21) {
-                // Stelle sicher, dass die Study-Events nicht nach der Prüfung stattfinden
-                if (studyEventStart < examStart) {  // Study-Event muss vor der Prüfung liegen
-                  studyEvents.push({
-                    title: `Study for ${exam.title}`,
-                    start: period.start.toISOString(),
-                    end: period.end.toISOString(),
-                    backgroundColor: studyEventColor,  // Hier wird die Farbe verwendet
-                    relatedExamId: exam.id, // Verlinkung mit der Prüfung
-                  });
-                }
+            const freePeriods = getFreePeriods(
+              studyEventDate,
+              existingEvents,
+              studyDuration
+            );
+
+            // Regel für maximale Anzahl der Events pro Tag
+            let maxEventsPerDay;
+            if (studyDuration <= 15) {
+              maxEventsPerDay = 4;
+            } else if (studyDuration <= 90) {
+              maxEventsPerDay = 2;
+            } else {
+              maxEventsPerDay = 1;
+            }
+
+            let dailyEventCount = 0;
+
+            for (const period of freePeriods) {
+              if (dailyEventCount >= maxEventsPerDay) break;
+
+              const eventStart = new Date(period.start);
+              const eventEnd = new Date(
+                eventStart.getTime() + studyDuration * 60000
+              );
+
+              if (eventStart < examStart && eventStart.getHours() >= 5) {
+                studyEvents.push({
+                  title: `Study for ${exam.title}`,
+                  start: eventStart.toISOString(),
+                  end: eventEnd.toISOString(),
+                  backgroundColor: studyEventColor,
+                  relatedExamId: exam.id,
+                });
+
+                dailyEventCount += 1;
+                if (dailyEventCount >= maxEventsPerDay) break;
               }
-            });
+            }
           }
         }
-  
-        // Sende die Study-Events an das Backend
+
         if (studyEvents.length > 0) {
-          axios.post("http://localhost:5000/api/events/bulk", studyEvents)
+          axios
+            .post("http://localhost:5000/api/events/bulk", studyEvents)
             .then(() => {
               console.log("Study events successfully created.");
             })
             .catch((err) => console.error("Error creating study events:", err));
         } else {
-          console.log("No study events were created due to lack of available time slots.");
+          console.log(
+            "No study events were created due to lack of available time slots."
+          );
         }
       })
       .catch((err) => console.error("Error fetching existing events:", err));
   };
-  
-  
-  
-  // Hilfsfunktion zum Finden freier Zeiträume an einem bestimmten Tag
-  const getFreePeriods = (day, existingEvents, studyDuration) => {
-    const freePeriods = [];
-    const dayStart = new Date(day.setHours(0, 0, 0, 0)); // Beginn des Tages
-    const dayEnd = new Date(day.setHours(23, 59, 59, 999)); // Ende des Tages
 
-    // Finde alle freien Zeiträume
-    let lastEndTime = dayStart;
+  // Hilfsfunktion zum Finden freier Zeiträume an einem bestimmten Tag
+  const getFreePeriods = (studyEventDate, existingEvents, studyDuration) => {
+    const dayStart = new Date(studyEventDate);
+    dayStart.setHours(6, 0, 0, 0); // Tag beginnt um 5:00 Uhr
+    const dayEnd = new Date(studyEventDate);
+    dayEnd.setHours(23, 59, 59, 999); // Tag endet um 23:59 Uhr
+
+    const freePeriods = [{ start: dayStart, end: dayEnd }];
 
     existingEvents.forEach((event) => {
-      // Wenn das Event am selben Tag stattfindet und es eine Lücke zwischen den Events gibt
-      if (event.start >= dayStart && event.start <= dayEnd) {
-        if (event.start > lastEndTime) {
-          // Es gibt eine Lücke zwischen den Events
-          let gapStart = lastEndTime;
-          let gapEnd = new Date(gapStart.getTime() + studyDuration * 60000); // Dauer des Study-Events
+      const eventStart = event.start;
+      const eventEnd = event.end;
 
-          if (gapEnd <= event.start) {
-            // Füge die freie Zeitspanne hinzu, wenn sie genügend lang ist
-            freePeriods.push({ start: gapStart, end: gapEnd });
-          }
+      for (let i = freePeriods.length - 1; i >= 0; i--) {
+        const period = freePeriods[i];
+
+        if (eventEnd <= period.start || eventStart >= period.end) {
+          // Kein Überlapp
+          continue;
         }
-        // Setze die letzte Endzeit auf das Ende des aktuellen Events
-        lastEndTime = event.end > lastEndTime ? event.end : lastEndTime;
+
+        freePeriods.splice(
+          i,
+          1,
+          ...(eventStart > period.start
+            ? [{ start: period.start, end: eventStart }]
+            : []),
+          ...(eventEnd < period.end
+            ? [{ start: eventEnd, end: period.end }]
+            : [])
+        );
       }
     });
 
-    // Falls nach dem letzten Event noch Zeit bleibt, füge auch das hinzu
-    if (lastEndTime < dayEnd) {
-      let gapStart = lastEndTime;
-      let gapEnd = new Date(gapStart.getTime() + studyDuration * 60000);
-      if (gapEnd <= dayEnd) {
-        freePeriods.push({ start: gapStart, end: gapEnd });
-      }
-    }
-
-    return freePeriods;
+    return freePeriods.filter((period) => {
+      const duration = (period.end - period.start) / (1000 * 60); // Dauer in Minuten
+      return duration >= studyDuration;
+    });
   };
 
   const toggleEventCompletion = (eventId) => {
@@ -249,6 +280,7 @@ function Calendar() {
       .then(() => {
         fetchEvents(); // Aktualisiere die Event-Daten
         handleModalClose(); // Schließe das Modal
+        triggerFlames(); // Flammen starten
       })
       .catch((err) => console.error("Error toggling event completion:", err));
   };
@@ -285,6 +317,20 @@ function Calendar() {
 
   return (
     <div>
+      {showFlames && (
+        <div className="flames-container">
+          <div className="flame flame-1">🔥</div>
+          <div className="flame flame-2">🔥</div>
+          <div className="flame flame-3">🔥</div>
+          <div className="flame flame-4">🔥</div>
+          <div className="flame flame-6">🔥</div>
+          <div className="flame flame-7">🔥</div>
+          <div className="flame flame-8">🔥</div>
+          <div className="flame flame-9">🔥</div>
+          <div className="flame flame-10">🔥</div>
+        </div>
+      )}
+
       <Link to="/">
         <Button variant="secondary">Back to Home</Button>
       </Link>
