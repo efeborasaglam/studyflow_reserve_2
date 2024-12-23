@@ -2,3 +2,50 @@
   text-decoration: line-through;
   color: gray;
 }
+
+.flames-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 9999;  /* Sicherstellen, dass die Flammen immer oben angezeigt werden */
+}
+
+.flame {
+  position: absolute;
+  bottom: 0;
+  font-size: 50px; /* Größe des Flammen-Emojis */
+  animation: flameFly 3s ease-in-out forwards;
+  opacity: 0.8;
+  transform-origin: center;
+  z-index: 9999;
+  color: orange; /* Farbe des Emoji, um es feurig wirken zu lassen */
+}
+
+.flame-1 { left: 10%; animation-delay: 0s; }
+.flame-2 { left: 20%; animation-delay: 0.3s; }
+.flame-3 { left: 30%; animation-delay: 0.6s; }
+.flame-4 { left: 40%; animation-delay: 0.9s; }
+.flame-6 { left: 50%; animation-delay: 0s; }
+.flame-7 { left: 60%; animation-delay: 0.3s; }
+.flame-8 { left: 70%; animation-delay: 0.6s; }
+.flame-9 { left: 80%; animation-delay: 0.9s; }
+.flame-10 { left: 90%; animation-delay: 0.9s; }
+
+@keyframes flameFly {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-150px) scale(1.2) rotate(10deg);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-300px) scale(0.5) rotate(45deg);
+    opacity: 0;
+  }
+}
