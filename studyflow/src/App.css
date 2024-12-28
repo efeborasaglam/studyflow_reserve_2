@@ -49,3 +49,51 @@
     opacity: 0;
   }
 }
+body.dark-mode {
+  background-color: #121212;
+  color: #e0e0e0;
+}
+
+.card.dark-mode {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+}
+
+.fullcalendar.dark-mode {
+  --fc-bg-color: #121212;
+  --fc-neutral-bg-color: #1e1e1e;
+  --fc-border-color: #333;
+  --fc-text-color: #e0e0e0;
+  --fc-event-bg-color: #333;
+  --fc-event-text-color: #e0e0e0;
+  --fc-today-bg-color: rgba(255, 255, 255, 0.1);
+}
+
+button.dark-mode {
+  background-color: #333;
+  color: #e0e0e0;
+}
+
+/* Dark mode styles */
+body.dark-mode {
+  background-color: #121212; /* Dunkler Hintergrund */
+  color: #ffffff; /* Helle Schriftfarbe */
+}
+
+.dark-mode .card {
+  background-color: #1e1e1e; /* Dunkler Hintergrund für Karten */
+  color: #ffffff; /* Helle Schriftfarbe für Karten */
+}
+
+.dark-mode .btn {
+  background-color: #444; /* Dunkler Button-Hintergrund */
+  color: #ffffff; /* Helle Schriftfarbe für Buttons */
+  border-color: #555; /* Button-Rahmen */
+}
+
+/* Standard-Stil */
+body {
+  background-color: #ffffff; /* Standard weißer Hintergrund */
+  color: #000000; /* Standard schwarze Schrift */
+  transition: background-color 0.3s, color 0.3s; /* Sanfter Übergang */
+}
