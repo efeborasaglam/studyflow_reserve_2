@@ -3,10 +3,10 @@ const express = require("express");
 const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-
 const multer = require("multer");
 const ical = require("node-ical");
 const fs = require("fs");
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
@@ -14,8 +14,8 @@ app.use(bodyParser.json());
 
 const upload = multer({ dest: "uploads/" });
 
-const mongoURI =
-  "mongodb+srv://efeborasaglam:Efe05St_Gallen@restfullapi.tex7t7x.mongodb.net/studyflow?retryWrites=true&w=majority";
+const mongoURI = process.env.MONGO_URI;
+
 mongoose
   .connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("MongoDB connected"))
@@ -23,34 +23,38 @@ mongoose
 
 const eventSchema = new mongoose.Schema({
   title: { type: String, required: true },
-  start: { type: String, required: true },
-  end: { type: String },
+  start: { type: Date, required: true },
+  end: { type: Date, required: true },
   backgroundColor: { type: String, default: "blue" },
   isCompleted: { type: Boolean, default: false },
+  isExam: { type: Boolean, default: false },
+  importance: { type: Number, default: 50, min: 1, max: 100 },
+  relatedExamId: { type: mongoose.Schema.Types.ObjectId, ref: "Event" },
 });
 
-eventSchema.virtual("id").get(function () {
-  return this._id.toHexString();
-});
+// Indexe für schnelle Abfragen nach Start- und Endzeit
+eventSchema.index({ start: 1, end: 1 });
 
 const Event = mongoose.model("Event", eventSchema);
 
-app.get('/api/events', (req, res) => {
+app.get("/api/events", (req, res) => {
   Event.find()
-    .sort({ start: 1 })  // Sortiere Events nach Startzeitpunkt
+    .sort({ start: 1 }) // Sortiere Events nach Startzeitpunkt
     .then((events) => res.json(events))
-    .catch((err) => res.status(500).json({ error: 'Failed to fetch events' }));
+    .catch((err) => res.status(500).json({ error: "Failed to fetch events" }));
 });
 
 // POST-Endpunkt zum Erstellen eines Events
-app.post('/api/events', async (req, res) => {
+app.post("/api/events", async (req, res) => {
   try {
-    const { start, end, isExam } = req.body;
+    const { start, end, isExam, studyDuration, studyEventColor, daysBefore, importance } = req.body;
 
     // Wenn kein Endzeitpunkt angegeben ist, füge 1 Stunde zum Startzeitpunkt hinzu
     let eventEnd = end;
     if (!eventEnd) {
-      eventEnd = new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString(); // 1 Stunde nach Start
+      eventEnd = new Date(
+        new Date(start).getTime() + 60 * 60 * 1000
+      ).toISOString(); // 1 Stunde nach Start
     }
 
     // Überprüfen, ob ein Event oder eine Prüfung bereits im gleichen Zeitraum existiert
@@ -61,35 +65,97 @@ app.post('/api/events', async (req, res) => {
     });
 
     if (conflictingEvent) {
-      return res.status(400).json({ error: 'Es gibt bereits ein Event oder eine Prüfung zur gleichen Zeit.' });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Es gibt bereits ein Event oder eine Prüfung zur gleichen Zeit.",
+        });
     }
 
     const newEvent = new Event(req.body);
     await newEvent.save();
+
+    // Wenn es sich um eine Prüfung handelt, erstelle die Study-Events
+    if (isExam) {
+      const examStart = new Date(newEvent.start);
+      const studyInterval = importance <= 20 ? 3 : importance <= 50 ? 2 : 1; // Intervall basierend auf Wichtigkeit
+
+      for (let i = 0; i < daysBefore; i += studyInterval) {
+        let studyEventStart = new Date(examStart);
+        studyEventStart.setDate(examStart.getDate() - i); // Tage vor der Prüfung
+        studyEventStart.setHours(6, 0, 0, 0); // Setze den Startzeitpunkt auf 6 Uhr morgens
+
+        let numberOfEvents;
+
+        // Bestimme die Anzahl der Events basierend auf der Study-Dauer
+        if (studyDuration < 30) {
+          numberOfEvents = 4; // 4 Termine pro Tag
+        } else if (studyDuration >= 30 && studyDuration < 60) {
+          numberOfEvents = Math.random() < 0.5 ? 2 : 3; // 2 oder 3 Termine pro Tag
+        } else {
+          numberOfEvents = 2; // 2 Termine pro Tag
+        }
+
+        for (let j = 0; j < numberOfEvents; j++) {
+          // Finde den nächsten verfügbaren Slot für das Study-Event
+          const { start, end } = await findNextAvailableSlot(
+            studyEventStart.toISOString(),
+            studyDuration, // Verwende die tatsächliche Study-Dauer
+            newEvent._id // Setze die relatedExamId
+          );
+
+          // Überprüfe, ob der Startzeitpunkt nach 5:59 Uhr liegt
+          if (studyEventStart.getHours() < 6) {
+            studyEventStart.setHours(6, 0, 0, 0); // Setze den Startzeitpunkt auf 6 Uhr morgens
+          }
+
+          await Event.create({
+            title: `Study for ${newEvent.title}`,
+            start,
+            end,
+            backgroundColor: studyEventColor || "blue", // Verwende die korrekte Farbe
+            relatedExamId: newEvent._id, // Setze die relatedExamId
+          });
+
+          // Erhöhe den Startzeitpunkt für das nächste Event um die Study-Dauer
+          studyEventStart.setMinutes(studyEventStart.getMinutes() + studyDuration);
+        }
+      }
+    }
+
     res.status(201).json(newEvent);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error creating event');
+    res.status(500).send("Error creating event");
   }
 });
 
 // Hilfsfunktion: Nächsten freien Zeitraum finden (für Study-Events und normale Events)
 async function findNextAvailableSlot(start, durationInMinutes, ignoreEventId = null) {
   let proposedStart = new Date(start); // Startzeitpunkt für den neuen Slot
-  let proposedEnd = new Date(proposedStart.getTime() + durationInMinutes * 60000);
+  let proposedEnd = new Date(
+    proposedStart.getTime() + durationInMinutes * 60000
+  );
 
   while (true) {
     // Finde ein Event, das im Konflikt mit dem vorgeschlagenen Zeitraum steht
     const conflictingEvent = await Event.findOne({
       _id: { $ne: ignoreEventId }, // Ignoriere das aktuelle Event bei der Kollisionserkennung
       $or: [
-        { start: { $lt: proposedEnd.toISOString() }, end: { $gt: proposedStart.toISOString() } },
+        {
+          start: { $lt: proposedEnd.toISOString() },
+          end: { $gt: proposedStart.toISOString() },
+        },
       ],
     }).sort({ end: 1 }); // Das früheste Konfliktende finden
 
     if (!conflictingEvent) {
       // Kein Konflikt gefunden, Slot ist frei
-      return { start: proposedStart.toISOString(), end: proposedEnd.toISOString() };
+      return {
+        start: proposedStart.toISOString(),
+        end: proposedEnd.toISOString(),
+      };
     }
 
     // Konflikt besteht - neuen Startzeitpunkt nach dem Ende des Konflikts setzen
@@ -99,71 +165,81 @@ async function findNextAvailableSlot(start, durationInMinutes, ignoreEventId = n
   }
 }
 
-
-
-
 // PUT-Endpunkt zum Bearbeiten eines Events
-// PUT-Endpunkt zum Bearbeiten einer Prüfung und dazugehöriger Lernereignisse
-// PUT-Endpunkt zum Bearbeiten einer Prüfung und dazugehöriger Lernereignisse
-// PUT-Endpunkt zum Bearbeiten einer Prüfung und dazugehöriger Lernereignisse
-app.put('/api/events/:id', async (req, res) => {
+app.put("/api/events/:id", async (req, res) => {
   try {
     const eventId = req.params.id;
     const updatedEvent = req.body;
 
+    // Wenn kein Endzeitpunkt angegeben, setze einen Standard-Endzeitpunkt (1 Stunde nach Start)
     if (!updatedEvent.end) {
-      updatedEvent.end = new Date(new Date(updatedEvent.start).getTime() + 60 * 60 * 1000).toISOString(); // Standard 1 Stunde
+      updatedEvent.end = new Date(
+        new Date(updatedEvent.start).getTime() + 60 * 60 * 1000
+      ).toISOString(); // Standard 1 Stunde
     }
 
+    // Überprüfe auf Konflikte
     const conflictingEvent = await Event.findOne({
       _id: { $ne: eventId },
       $or: [
-        { start: { $lte: updatedEvent.end }, end: { $gte: updatedEvent.start } },
+        {
+          start: { $lte: updatedEvent.end },
+          end: { $gte: updatedEvent.start },
+        },
       ],
     });
-
     if (conflictingEvent) {
-      return res.status(400).json({ error: 'Zeitkonflikt mit einem anderen Termin.' });
+      return res
+        .status(400)
+        .json({ error: "Zeitkonflikt mit einem anderen Termin." });
     }
 
-    const event = await Event.findByIdAndUpdate(eventId, updatedEvent, { new: true });
+    // Finde das bestehende Event
+    const event = await Event.findById(eventId);
+    
+    // Lösche die bestehenden Study Events, wenn es sich um eine Prüfung handelt
+    if (event && event.isExam) {
+      await Event.deleteMany({ relatedExamId: eventId });
+    }
 
-    if (event.isExam) {
-      const studyDuration = req.body.studyDuration || 60; // Dauer eines Study-Events (z. B. 60 Minuten)
-      const daysBefore = req.body.daysBefore || 7; // Wie viele Tage vor der Prüfung
-      const importance = req.body.importance || 50; // Wichtigkeit (zur Berechnung der Intervalle)
-    
-      const examStart = new Date(event.start);
+    // Aktualisiere das Event
+    const updated = await Event.findByIdAndUpdate(eventId, updatedEvent, {
+      new: true,
+    });
+
+    // Wenn es sich um eine Prüfung handelt, erstelle neue Study Events
+    if (updated.isExam) {
+      const studyDuration = req.body.studyDuration || 60; // Minuten
+      const daysBefore = req.body.daysBefore || 7;
+      const importance = req.body.importance || 50; 
+      const examStart = new Date(updated.start);
       const studyInterval = importance <= 20 ? 3 : importance <= 50 ? 2 : 1; // Intervall basierend auf Wichtigkeit
-    
+
       for (let i = 0; i < daysBefore; i += studyInterval) {
         let studyEventStart = new Date(examStart);
         studyEventStart.setDate(examStart.getDate() - i); // Tage vor der Prüfung
-        studyEventStart.setHours(9, 0, 0, 0); // Standardstartzeit 9:00
-    
-        // Finde den nächsten konfliktfreien Zeitraum
-        const { start, end } = await findNextAvailableSlot(studyEventStart.toISOString(), studyDuration, event._id);
-    
-        // Erstelle das Study-Event
+        studyEventStart.setHours(9, 0, 0, 0); 
+        const { start, end } = await findNextAvailableSlot(
+          studyEventStart.toISOString(),
+          studyDuration,
+          updated._id
+        );
         await Event.create({
-          title: `Study for ${event.title}`,
+          title: `Study for ${updated.title}`,
           start,
           end,
           backgroundColor: "blue",
-          relatedExamId: event._id,
+          relatedExamId: updated._id,
         });
       }
-    }    
+    }
 
-    res.json(event);
+    res.json(updated);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Fehler beim Aktualisieren des Termins.');
+    res.status(500).send("Fehler beim Aktualisieren des Termins.");
   }
 });
-
-
-
 
 // Toggle event completion
 app.put("/api/events/toggle-completed/:id", async (req, res) => {
@@ -184,6 +260,28 @@ app.put("/api/events/toggle-completed/:id", async (req, res) => {
   }
 });
 
+// DELETE-Endpunkt zum Löschen einer Prüfung und der zugehörigen Lernevents
+app.delete("/api/events/:id", async (req, res) => {
+  try {
+    const eventId = req.params.id;
+    const event = await Event.findById(eventId);
+    
+    // Wenn das Event eine Prüfung ist, lösche die zugehörigen Study Events
+    if (event && event.isExam) {
+      const deletedStudyEvents = await Event.deleteMany({ relatedExamId: eventId });
+      console.log(`Deleted study events: ${deletedStudyEvents.deletedCount}`);
+    }
+    
+    // Lösche das Event selbst
+    await Event.findByIdAndDelete(eventId);
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Fehler beim Löschen des Termins.");
+  }
+});
+
+// ICS-Datei hochladen und Events erstellen
 app.post("/api/upload-ics", upload.single("icsFile"), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -209,66 +307,6 @@ app.post("/api/upload-ics", upload.single("icsFile"), async (req, res) => {
   }
 });
 
-// DELETE-Endpunkt zum Löschen einer Prüfung und der zugehörigen Lernevents
-app.delete("/api/events/:id", async (req, res) => {
-  try {
-    const eventId = req.params.id;
-    const event = await Event.findById(eventId);
-
-    if (event.isExam) {
-      // Löschen aller verknüpften Lernereignisse
-      await Event.deleteMany({ relatedExamId: eventId });
-    }
-
-    await Event.findByIdAndDelete(eventId);
-
-    res.status(204).send();
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Fehler beim Löschen des Termins.");
-  }
-});
-
-
-app.delete("/api/events/related/:examId", async (req, res) => {
-  try {
-    await Event.deleteMany({ relatedExamId: req.params.examId });
-    res.status(204).send();
-  } catch (err) {
-    res.status(500).send("Error deleting related study events");
-  }
-});
-
-
-app.post('/api/events/bulk', (req, res) => {
-  const studyEvents = req.body; // Liste der Study-Events, die erstellt werden sollen
-
-  // Hole alle bestehenden Events
-  Event.find().then((events) => {
-    const eventsSorted = events.sort((a, b) => new Date(a.start) - new Date(b.start));
-    
-    // Hier kannst du dann prüfen, ob die geplanten Study-Events mit den bestehenden Events kollidieren
-    studyEvents.forEach((studyEvent) => {
-      // Überprüfe, ob das Study-Event mit bestehenden Events kollidiert
-      let conflict = eventsSorted.some((existingEvent) => {
-        return (
-          new Date(studyEvent.start) < new Date(existingEvent.end) &&
-          new Date(studyEvent.end) > new Date(existingEvent.start)
-        );
-      });
-
-      if (!conflict) {
-        // Wenn keine Kollision auftritt, erstelle das Study-Event
-        const newStudyEvent = new Event(studyEvent);
-        newStudyEvent.save();
-      } else {
-        console.log('Kollision mit einem bestehenden Event:', studyEvent);
-      }
-    });
-    res.status(200).json({ message: 'Study events created successfully' });
-  });
-});
-
-
+// Server starten
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
