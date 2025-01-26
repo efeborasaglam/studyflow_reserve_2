@@ -1,4 +1,4 @@
-// Calendar.jsx
+
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import Fullcalendar from "@fullcalendar/react";
@@ -92,47 +92,32 @@ function Calendar() {
     const start = formData.get("start");
     let end = formData.get("end");
     const daysBefore = isExam ? parseInt(formData.get("daysBefore"), 10) : 0;
-    const studyDuration = isExam
-      ? parseInt(formData.get("studyDuration"), 10)
-      : 0;
+    const studyDuration = isExam ? parseInt(formData.get("studyDuration"), 10) : 0;
     const studyEventColor = formData.get("studyEventColor"); // Farbe aus dem Formular holen
-
+  
     // Wenn kein Endzeitpunkt angegeben, setze einen Standard-Endzeitpunkt (1 Stunde nach Start)
     if (!end) {
       end = new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString();
     }
-
-    // Wenn es sich um einen Test handelt, hole die Importance
-    const importance = isExam ? parseInt(formData.get("importance"), 10) : null;
-
+  
     const eventData = {
       title,
       start,
       end,
       isExam,
       studyEventColor, // Farbe für die Study-Events hinzufügen
-      ...(isExam ? { importance, backgroundColor: "red" } : {}),
+      ...(isExam ? { importance: parseInt(formData.get("importance"), 10), daysBefore, studyDuration } : {}),
     };
-
+  
     const axiosMethod = modalData.isEdit ? axios.put : axios.post;
     const url = modalData.isEdit
       ? `http://localhost:5000/api/events/${modalData.event.id}`
       : "http://localhost:5000/api/events";
-
-    axiosMethod(url, eventData)
+  
+      axiosMethod(url, eventData)
       .then((response) => {
-        // Wenn es sich um einen Test handelt, generiere Study-Events mit der Farbe
-        if (isExam) {
-          generateStudyEvents(
-            response.data,
-            importance,
-            daysBefore,
-            studyDuration,
-            studyEventColor // Farbe hier übergeben
-          );
-        }
-        fetchEvents();
-        handleModalClose();
+        fetchEvents(); // Aktualisiere die Events
+        handleModalClose(); // Schließe das Modal
       })
       .catch((err) => {
         if (err.response && err.response.data && err.response.data.error) {
@@ -142,7 +127,7 @@ function Calendar() {
         }
       });
   };
-
+  
   const generateStudyEvents = (
     exam,
     importance,
@@ -151,7 +136,7 @@ function Calendar() {
     studyEventColor
   ) => {
     const studyEvents = [];
-
+  
     let studyInterval;
     if (importance >= 1 && importance <= 20) {
       studyInterval = 3; // Alle 3 Tage lernen
@@ -160,9 +145,9 @@ function Calendar() {
     } else if (importance >= 51 && importance <= 100) {
       studyInterval = 1; // Jeden Tag lernen
     }
-
+  
     const examStart = new Date(exam.start);
-
+  
     axios
       .get("http://localhost:5000/api/events")
       .then((response) => {
@@ -170,18 +155,18 @@ function Calendar() {
           start: new Date(event.start),
           end: new Date(event.end),
         }));
-
+  
         for (let i = 0; i < daysBefore; i++) {
           let studyEventDate = new Date(examStart);
           studyEventDate.setDate(examStart.getDate() - i);
-
+  
           if (i % studyInterval === 0) {
             const freePeriods = getFreePeriods(
               studyEventDate,
               existingEvents,
               studyDuration
             );
-
+  
             // Regel für maximale Anzahl der Events pro Tag
             let maxEventsPerDay;
             if (studyDuration <= 15) {
@@ -191,18 +176,20 @@ function Calendar() {
             } else {
               maxEventsPerDay = 1;
             }
-
+  
             let dailyEventCount = 0;
-
+  
+            // Verteile die Study-Events über den Tag
             for (const period of freePeriods) {
               if (dailyEventCount >= maxEventsPerDay) break;
-
+  
               const eventStart = new Date(period.start);
               const eventEnd = new Date(
                 eventStart.getTime() + studyDuration * 60000
               );
-
-              if (eventStart < examStart && eventStart.getHours() >= 5) {
+  
+              // Überprüfe, ob der Startzeitpunkt nach 6:00 Uhr liegt
+              if (eventStart.getHours() >= 6 && eventEnd.getHours() < 24) {
                 studyEvents.push({
                   title: `Study for ${exam.title}`,
                   start: eventStart.toISOString(),
@@ -210,14 +197,13 @@ function Calendar() {
                   backgroundColor: studyEventColor,
                   relatedExamId: exam.id,
                 });
-
+  
                 dailyEventCount += 1;
-                if (dailyEventCount >= maxEventsPerDay) break;
               }
             }
           }
         }
-
+  
         if (studyEvents.length > 0) {
           axios
             .post("http://localhost:5000/api/events/bulk", studyEvents)
@@ -306,15 +292,18 @@ function Calendar() {
               .delete(
                 `http://localhost:5000/api/events/related/${modalData.event.id}`
               )
-              .then(fetchEvents);
+              .then(() => fetchEvents()) // Aktualisiere nach dem Löschen der verwandten Events
+              .catch((err) =>
+                console.error("Error deleting related events:", err)
+              );
           }
-          fetchEvents();
-          handleModalClose();
+          fetchEvents(); // Aktualisiere die Events nach dem Löschen des Haupt-Events
+          handleModalClose(); // Schließe das Modal nach dem Löschen
         })
         .catch((err) => console.error("Error deleting event:", err));
     }
   };
-
+  
   return (
     <div>
       {showFlames && (
@@ -432,7 +421,6 @@ function Calendar() {
                     required
                   />
                 </Form.Group>
-
                 <Form.Group className="mb-3">
                   <Form.Label>Study duration (in minutes)</Form.Label>
                   <Form.Control
@@ -442,14 +430,12 @@ function Calendar() {
                     required
                   />
                 </Form.Group>
-
-                {/* Neues Feld für die Farbauswahl */}
                 <Form.Group className="mb-3">
                   <Form.Label>Study Event Color</Form.Label>
                   <Form.Control
                     type="color"
                     name="studyEventColor"
-                    defaultValue="#0000ff" // Standardfarbe (blau)
+                    defaultValue="#0000ff" 
                   />
                 </Form.Group>
               </>
@@ -463,7 +449,7 @@ function Calendar() {
               >
                 {modalData.event.isCompleted
                   ? "Mark as Incomplete"
-                  : "Mark as Completed"}
+                  : "Mark as Completed, Ich schwöre auf Gott das ich es erledigt habe, Vallah!"}
               </Button>
             )}
             <Button variant="danger" onClick={handleDeleteEvent}>
@@ -481,5 +467,4 @@ function Calendar() {
     </div>
   );
 }
-
 export default Calendar;
